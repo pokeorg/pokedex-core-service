@@ -7,15 +7,16 @@ import { Pool } from "pg";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 
-let pool: Pool;
-
 dotenv.config();
+
+let pool: Pool;
 
 const app = express();
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
+// ========================= UTILITY FUNCTIONS =========================
 const validateEmail = (email: string) => {
   return String(email)
     .toLowerCase()
@@ -37,18 +38,20 @@ const validatePassword = (password: string): boolean => {
 
 const validateEmailUniqueness = async (email: string): Promise<boolean> => {
   const result = await pool.query(
-    `select count(id) from users where email = '${email}'`
+    `SELECT COUNT(id) FROM users WHERE email = $1`,
+    [email]
   );
-  return result.rows[0].count === 0;
+  return result.rows[0].count === "0";
 };
 
 const validateUsernameUniqueness = async (
   username: string
 ): Promise<boolean> => {
   const result = await pool.query(
-    `select count(id) from users where username = '${username}'`
+    `SELECT COUNT(id) FROM users WHERE username = $1`,
+    [username]
   );
-  return result.rows[0].count === 0;
+  return result.rows[0].count === "0";
 };
 
 const validateEmailAndUsernameUniqueness = async (
@@ -56,10 +59,10 @@ const validateEmailAndUsernameUniqueness = async (
   username: string
 ): Promise<boolean> => {
   const result = await pool.query(
-    `select count(id) from users where email = $1 or username = $2`,
+    `SELECT COUNT(id) FROM users WHERE email = $1 OR username = $2`,
     [email, username]
   );
-  return result.rows[0].count == 0;
+  return result.rows[0].count === "0";
 };
 
 const createUser = async ({
@@ -72,24 +75,25 @@ const createUser = async ({
   passwordHash: string;
 }): Promise<any> => {
   const result = await pool.query(
-    "insert into users (username, email, password) values ($1, $2, $3) returning *",
+    "INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING *",
     [username, email, passwordHash]
   );
   return result.rows[0];
 };
 
 const getPasswordHash = (plaintextPassword: string): string => {
-  const saltRounds = Number(process.env.SALT_ROUNDS);
+  const saltRounds = Number(process.env.SALT_ROUNDS) || 10;
   return bcrypt.hashSync(plaintextPassword, saltRounds);
 };
 
 const comparePasswordHash = (
   plaintextPassword: string,
   hashedPassword: string
-): boolean => {
-  return bcrypt.compareSync(plaintextPassword, hashedPassword);
+): Promise<boolean> => {
+  return bcrypt.compare(plaintextPassword, hashedPassword);
 };
 
+// ========================= HANDLERS =========================
 const signUpHandler = async (req: Request, res: Response) => {
   try {
     const { username, password, email } = req.body;
@@ -98,16 +102,12 @@ const signUpHandler = async (req: Request, res: Response) => {
     if (!password) throw new Error("Password missing");
     if (!email) throw new Error("Email missing");
 
-    // check if email is valid
     const isEmailValid = validateEmail(email);
     if (!isEmailValid) throw new Error("Email is invalid");
 
-    // check is username is valid
-    // TODO: complete this functionality
     const isUsernameValid = validateUserName(username);
     if (!isUsernameValid) throw new Error("Username is invalid");
 
-    // check email or password uniqueness
     const isEmailOrPasswordUnique = await validateEmailAndUsernameUniqueness(
       email,
       username
@@ -115,33 +115,73 @@ const signUpHandler = async (req: Request, res: Response) => {
     if (!isEmailOrPasswordUnique)
       throw new Error("Email or username already in use");
 
-    // check if password is valid
-    // TODO: complete this functionality
     const isPasswordValid = validatePassword(password);
     if (!isPasswordValid) throw new Error("Password is invalid");
 
-    // generate hash of password
     const passwordHash = getPasswordHash(password);
 
-    // Create the user and get the newly created user object
     const user = await createUser({ username, passwordHash, email });
 
-    // Generate JWT token
     const jwtSecret: string = process.env.JWT_SECRET || "";
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      jwtSecret,
-      { expiresIn: "1h" } //
-    );
+    const token = jwt.sign({ userId: user.id, email: user.email }, jwtSecret, {
+      expiresIn: "1h",
+    });
 
-    // Send token in response
     res.status(201).send({ token });
   } catch (error: any) {
     res.status(400).send({ error: error.message });
   }
 };
 
+const loginHandler = async (req: Request, res: Response) => {
+  try {
+    const { usernameOrEmail, password } = req.body;
+
+    if (!usernameOrEmail) {
+      return res.status(400).send({ error: "Username Or Email is required" });
+    }
+    if (!password) {
+      return res.status(400).send({ error: "Password is required" });
+    }
+
+    const isEmail = validateEmail(usernameOrEmail);
+
+    let userQuery = `SELECT * FROM users WHERE ${
+      isEmail ? "email" : "username"
+    } = $1`;
+
+    const result = await pool.query(userQuery, [usernameOrEmail]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).send({ error: "User not found" });
+    }
+
+    const user = result.rows[0] as unknown as {
+      id: number;
+      email: string;
+      password: string;
+    };
+
+    const isPasswordValid = await comparePasswordHash(password, user.password);
+
+    if (!isPasswordValid) {
+      return res.status(401).send({ error: "Incorrect Password" });
+    }
+
+    const jwtSecret: string = process.env.JWT_SECRET || "";
+    const token = jwt.sign({ userId: user.id, email: user.email }, jwtSecret, {
+      expiresIn: "1h",
+    });
+
+    res.status(200).send({ token });
+  } catch (error: any) {
+    res.status(500).send({ error: error.message });
+  }
+};
+
+// ========================= ROUTES =========================
 app.post("/signup", signUpHandler);
+app.post("/login", loginHandler);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
@@ -156,5 +196,3 @@ app.listen(PORT, () => {
 
   console.log(`Server running on port ${PORT}`);
 });
-
-
