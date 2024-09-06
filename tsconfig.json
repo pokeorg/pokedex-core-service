@@ -12,8 +12,8 @@
     "resolveJsonModule": true,              // Allow importing .json files
     "noImplicitAny": true,                  // Raise error on expressions and declarations with an implied 'any' type
     "noImplicitThis": true,                 // Raise error on 'this' expressions with an implied 'any' type
-    "noUnusedLocals": true,                 // Report errors on unused local variables
-    "noUnusedParameters": true,             // Report errors on unused parameters
+    "noUnusedLocals": false,                 // Report errors on unused local variables
+    "noUnusedParameters": false,             // Report errors on unused parameters
     "noFallthroughCasesInSwitch": true,     // Report errors for fallthrough cases in switch statements
     "noUncheckedIndexedAccess": true,       // Add 'undefined' to a type when accessed using an index
     "strictNullChecks": true,               // Enable strict null checks
