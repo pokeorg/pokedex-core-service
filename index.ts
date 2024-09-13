@@ -1,6 +1,7 @@
 /** @format */
 
 import dotenv from "dotenv";
+import cors from 'cors';
 import express, { Request, Response } from "express";
 import bodyParser from "body-parser";
 import { Pool } from "pg";
@@ -15,6 +16,8 @@ const app = express();
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+
+
 
 // ========================= UTILITY FUNCTIONS =========================
 const validateEmail = (email: string) => {
@@ -81,6 +84,12 @@ const createUser = async ({
   return result.rows[0];
 };
 
+// Add CORS middleware
+app.use(cors({
+  origin: 'http://localhost:5173', // Allow requests from your frontend URL
+  credentials: true, // Allow cookies and headers
+}));
+
 const getPasswordHash = (plaintextPassword: string): string => {
   const saltRounds = Number(process.env.SALT_ROUNDS) || 10;
   return bcrypt.hashSync(plaintextPassword, saltRounds);
@@ -135,22 +144,33 @@ const signUpHandler = async (req: Request, res: Response) => {
 
 const loginHandler = async (req: Request, res: Response) => {
   try {
-    const { usernameOrEmail, password } = req.body;
+    console.log('Request body:', req.body); // Log the entire request body
 
-    if (!usernameOrEmail) {
-      return res.status(400).send({ error: "Username Or Email is required" });
+    // Extract fields from request body
+    const {email, password } = req.body;
+
+    console.log('Login attempt:', { email, password });
+
+    // Check if usernameOrEmail and password are provided
+    if (!email) {
+      console.log('email is missing');
+      return res.status(400).send({ error: "Email is required" });
     }
     if (!password) {
       return res.status(400).send({ error: "Password is required" });
     }
 
-    const isEmail = validateEmail(usernameOrEmail);
+    // Validate if it's an email
+    const isEmail = validateEmail(email);
+    console.log('Is email:', isEmail);
 
+    // Determine the query based on whether it's an email or username
     let userQuery = `SELECT * FROM users WHERE ${
       isEmail ? "email" : "username"
     } = $1`;
 
-    const result = await pool.query(userQuery, [usernameOrEmail]);
+    const result = await pool.query(userQuery, [email]);
+    console.log('Query result:', result.rows);
 
     if (result.rows.length === 0) {
       return res.status(404).send({ error: "User not found" });
@@ -162,12 +182,15 @@ const loginHandler = async (req: Request, res: Response) => {
       password: string;
     };
 
+    // Validate password
     const isPasswordValid = await comparePasswordHash(password, user.password);
+    console.log('Password valid:', isPasswordValid);
 
     if (!isPasswordValid) {
       return res.status(401).send({ error: "Incorrect Password" });
     }
 
+    // Generate JWT token
     const jwtSecret: string = process.env.JWT_SECRET || "";
     const token = jwt.sign({ userId: user.id, email: user.email }, jwtSecret, {
       expiresIn: "1h",
@@ -175,9 +198,11 @@ const loginHandler = async (req: Request, res: Response) => {
 
     res.status(200).send({ token });
   } catch (error: any) {
+    console.error('Error:', error.message);
     res.status(500).send({ error: error.message });
   }
 };
+
 
 // ========================= ROUTES =========================
 app.post("/signup", signUpHandler);
