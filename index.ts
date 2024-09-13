@@ -39,33 +39,20 @@ const validatePassword = (password: string): boolean => {
   return passwordRegex.test(password);
 };
 
-const validateEmailUniqueness = async (email: string): Promise<boolean> => {
-  const result = await pool.query(
-    `SELECT COUNT(id) FROM users WHERE email = $1`,
-    [email]
-  );
-  return result.rows[0].count === "0";
-};
 
-const validateUsernameUniqueness = async (
-  username: string
-): Promise<boolean> => {
-  const result = await pool.query(
-    `SELECT COUNT(id) FROM users WHERE username = $1`,
-    [username]
-  );
-  return result.rows[0].count === "0";
-};
 
-const validateEmailAndUsernameUniqueness = async (
-  email: string,
-  username: string
-): Promise<boolean> => {
+const validateEmailAndUsernameUniqueness = async (email: string, username: string): Promise<{ emailExists: boolean, usernameExists: boolean }> => {
   const result = await pool.query(
-    `SELECT COUNT(id) FROM users WHERE email = $1 OR username = $2`,
+    `SELECT 
+       (SELECT COUNT(id) FROM users WHERE email = $1) AS email_count, 
+       (SELECT COUNT(id) FROM users WHERE username = $2) AS username_count`,
     [email, username]
   );
-  return result.rows[0].count === "0";
+  
+  const emailExists = result.rows[0].email_count > 0;
+  const usernameExists = result.rows[0].username_count > 0;
+  
+  return { emailExists, usernameExists };
 };
 
 const createUser = async ({
@@ -86,7 +73,7 @@ const createUser = async ({
 
 // Add CORS middleware
 app.use(cors({
-  origin: 'http://localhost:5173', // Allow requests from your frontend URL
+  origin: 'http://localhost:5174', // Allow requests from your frontend URL
   credentials: true, // Allow cookies and headers
 }));
 
@@ -107,30 +94,30 @@ const signUpHandler = async (req: Request, res: Response) => {
   try {
     const { username, password, email } = req.body;
 
-    if (!username) throw new Error("Username missing");
-    if (!password) throw new Error("Password missing");
-    if (!email) throw new Error("Email missing");
-
+    // Check if email or username is already in use
+    const { emailExists, usernameExists } = await validateEmailAndUsernameUniqueness(email, username);
+    if (emailExists && usernameExists) {
+      return res.status(409).json({ error: "Both email and username are already in use." });
+    }
+    if (emailExists) {
+      return res.status(409).json({ error: "Email is already in use." });
+    }
+    if (usernameExists) {
+      return res.status(409).json({ error: "Username is already in use." });
+    }
+    //Validate email format
     const isEmailValid = validateEmail(email);
     if (!isEmailValid) throw new Error("Email is invalid");
-
+    // Validate username format
     const isUsernameValid = validateUserName(username);
     if (!isUsernameValid) throw new Error("Username is invalid");
-
-    const isEmailOrPasswordUnique = await validateEmailAndUsernameUniqueness(
-      email,
-      username
-    );
-    if (!isEmailOrPasswordUnique)
-      throw new Error("Email or username already in use");
-
+    // Validate password format
     const isPasswordValid = validatePassword(password);
     if (!isPasswordValid) throw new Error("Password is invalid");
-
+    // Create user
     const passwordHash = getPasswordHash(password);
-
     const user = await createUser({ username, passwordHash, email });
-
+    // Generate JWT
     const jwtSecret: string = process.env.JWT_SECRET || "";
     const token = jwt.sign({ userId: user.id, email: user.email }, jwtSecret, {
       expiresIn: "1h",
