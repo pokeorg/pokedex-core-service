@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { config } from '../config';
+import { config } from '../config/config';
 
 // Create a mail transporter using the mailTrap configuration
 const transporter = nodemailer.createTransport({
